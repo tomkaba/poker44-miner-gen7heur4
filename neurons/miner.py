@@ -94,7 +94,10 @@ class Miner(BaseMinerNeuron):
             _git_commit = os.getenv("POKER44_MODEL_REPO_COMMIT", "")
         self.model_manifest = build_local_model_manifest(
             repo_root=repo_root,
-            implementation_files=[Path(__file__).resolve()],
+            implementation_files=[
+                Path(__file__).resolve(),
+                repo_root / "poker44" / "miner_heuristics.py",
+            ],
             defaults={
                 "model_name": "poker44_gen7heur4",
                 "model_version": "7.4",
