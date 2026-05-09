@@ -1695,6 +1695,14 @@ def score_chunk_gen7heur1(chunk: List[dict]) -> Tuple[float, str]:
     return round(max(0.0, min(1.0, score)), 6), "gen7heur1"
 
 
+def score_chunk_gen7heur3(chunk: List[dict]) -> Tuple[float, str]:
+    """Score a chunk with the gen7heur3 profile (same math as gen7heur1)."""
+    score, route = score_chunk_gen7heur1(chunk)
+    if route == "gen7heur1":
+        return score, "gen7heur3"
+    return score, route.replace("gen7heur1", "gen7heur3")
+
+
 def score_chunks_gen7heur2(chunks: List[List[dict]]) -> Tuple[List[float], List[str], Dict[str, int]]:
     """Score chunks with gen7heur1 and rebalance near-threshold cases to 50/50."""
     if not chunks:
@@ -1756,6 +1764,67 @@ def score_chunks_gen7heur2(chunks: List[List[dict]]) -> Tuple[List[float], List[
     return scores, routes, stats
 
 
+def score_chunks_gen7heur4(chunks: List[List[dict]]) -> Tuple[List[float], List[str], Dict[str, int]]:
+    """Score chunks with gen7heur3 and rebalance near-threshold cases to 50/50."""
+    if not chunks:
+        return [], [], {
+            "n_chunks": 0,
+            "target_bots": 0,
+            "initial_bots": 0,
+            "initial_humans": 0,
+            "flips": 0,
+            "final_bots": 0,
+            "final_humans": 0,
+        }
+
+    threshold = 0.5
+    eps = 1e-6
+
+    scores: List[float] = []
+    routes: List[str] = []
+    for chunk in chunks:
+        score, _ = score_chunk_gen7heur3(chunk)
+        scores.append(float(score))
+        routes.append("gen7heur4")
+
+    n = len(scores)
+    initial_bot_indices = [idx for idx, s in enumerate(scores) if s >= threshold]
+    initial_human_indices = [idx for idx, s in enumerate(scores) if s < threshold]
+    initial_bots = len(initial_bot_indices)
+    initial_humans = len(initial_human_indices)
+
+    target_bots = n // 2
+
+    flips = 0
+    if initial_bots > target_bots:
+        need = initial_bots - target_bots
+        candidates = sorted(initial_bot_indices, key=lambda idx: (scores[idx] - threshold, idx))
+        for idx in candidates[:need]:
+            scores[idx] = round(threshold - eps, 6)
+            routes[idx] = "gen7heur4_rebalance"
+            flips += 1
+    elif initial_bots < target_bots:
+        need = target_bots - initial_bots
+        candidates = sorted(initial_human_indices, key=lambda idx: (threshold - scores[idx], idx))
+        for idx in candidates[:need]:
+            scores[idx] = round(threshold + eps, 6)
+            routes[idx] = "gen7heur4_rebalance"
+            flips += 1
+
+    final_bots = sum(1 for s in scores if s >= threshold)
+    final_humans = n - final_bots
+    stats = {
+        "n_chunks": n,
+        "target_bots": target_bots,
+        "initial_bots": initial_bots,
+        "initial_humans": initial_humans,
+        "flips": flips,
+        "final_bots": final_bots,
+        "final_humans": final_humans,
+    }
+    return scores, routes, stats
+
+
 
 def get_chunk_scorer_startup_check(scorer: str) -> Dict[str, object]:
     """Return startup readiness diagnostics for chunk-level scorers.
@@ -1766,13 +1835,13 @@ def get_chunk_scorer_startup_check(scorer: str) -> Dict[str, object]:
     scorer_norm = (scorer or "").strip().lower()
     info: Dict[str, object] = {
         "scorer": scorer_norm,
-        "active": scorer_norm in {"gen7heur1", "gen7heur2", "gen8lgbm", "gen9fold15"},
+        "active": scorer_norm in {"gen7heur4"},
         "ok": True,
         "error": None,
         "details": {},
     }
 
-    if scorer_norm in {"gen7heur1", "gen7heur2"}:
+    if scorer_norm in {"gen7heur4"}:
         env_path = os.getenv("POKER44_GEN7HEUR1_PROFILE", "")
         profile_path = (
             Path(env_path)
@@ -1782,7 +1851,7 @@ def get_chunk_scorer_startup_check(scorer: str) -> Dict[str, object]:
         details = {
             "profile_path": str(profile_path),
             "profile_exists": profile_path.exists(),
-            "rebalance_target": "50/50" if scorer_norm == "gen7heur2" else "disabled",
+            "rebalance_target": "50/50" if scorer_norm in {"gen7heur2", "gen7heur4"} else "disabled",
         }
         info["details"] = details
         try:
